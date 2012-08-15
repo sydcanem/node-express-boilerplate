@@ -1,3 +1,4 @@
+<% layout('layout') -%>
 <input type="hidden" id="image" value="<%= ((session.auth && session.user.image) ? session.user.image : '/img/default.png') %>">
 <input type="hidden" id="service" value="
 	<%= (session.auth && session.auth.github) ? '//github.com/favicon.ico' : '' %>
