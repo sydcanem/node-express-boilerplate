@@ -14,6 +14,7 @@ process.addListener('uncaughtException', function (err, stack) {
 	if (airbrake) { airbrake.notify(err); }
 });
 
+var http = require('http');
 var connect = require('connect');
 var express = require('express');
 var assetManager = require('connect-assetmanager');
@@ -25,11 +26,12 @@ var DummyHelper = require('./lib/dummy-helper');
 var RedisStore = require('connect-redis')(express);
 var sessionStore = new RedisStore;
 
-var app = module.exports = express.createServer();
-app.listen(siteConf.port, null);
+var app = module.exports = express();
+var server = http.createServer(app);
+server.listen(siteConf.port, null);
 
 // Setup socket.io server
-var socketIo = new require('./lib/socket-io-server.js')(app, sessionStore);
+var socketIo = new require('./lib/socket-io-server.js')(server, sessionStore, siteConf);
 var authentication = new require('./lib/authentication.js')(app, siteConf);
 // Setup groups for CSS / JS assets
 var assetsSettings = {
@@ -89,6 +91,7 @@ var assetsMiddleware = assetManager(assetsSettings);
 app.configure(function() {
 	app.set('view engine', 'ejs');
 	app.set('views', __dirname+'/views');
+	app.engine('ejs', require('ejs-locals'));
 });
 
 // Middleware
@@ -104,6 +107,26 @@ app.configure(function() {
 	app.use(authentication.middleware.auth());
 	app.use(authentication.middleware.normalizeUserData());
 	app.use(express['static'](__dirname+'/public', {maxAge: 86400000}));
+	
+	// Migrating from express 2.x to 3.x. app.dynamicHelpers must be replaced with the format below
+	app.use(function(req, res, next) {
+		res.locals.session = req.session;
+		res.locals.assetsCacheHashes = assetsMiddleware.cacheHashes;
+		next();
+	})
+	
+	// app.error deprecated in express version > 3.x use below middleware instead
+	app.use(function(err, req, res, next){
+		// Log the error to Airbreak if available, good for backtracking.
+		console.log(err);
+		if (airbrake) { airbrake.notify(err); }
+	
+		if (err instanceof NotFound) {
+			res.render('errors/404');
+		} else {
+			res.render('errors/500');
+		}
+	});	
 
 	// Send notification to computer/phone @ visit. Good to use for specific events or low traffic sites.
 	if (siteConf.notifoAuth) {
@@ -141,28 +164,7 @@ app.configure('production', function(){
 	});
 });
 
-// Template helpers
-app.dynamicHelpers({
-	'assetsCacheHashes': function(req, res) {
-		return assetsMiddleware.cacheHashes;
-	}
-	, 'session': function(req, res) {
-		return req.session;
-	}
-});
 
-// Error handling
-app.error(function(err, req, res, next){
-	// Log the error to Airbreak if available, good for backtracking.
-	console.log(err);
-	if (airbrake) { airbrake.notify(err); }
-
-	if (err instanceof NotFound) {
-		res.render('errors/404');
-	} else {
-		res.render('errors/500');
-	}
-});
 function NotFound(msg){
 	this.name = 'NotFound';
 	Error.call(this, msg);
